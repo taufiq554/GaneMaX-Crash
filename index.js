@@ -64,7 +64,7 @@ app.use(cors());
 
 // ==================== VARIABEL GLOBAL ==================== //
 const sessions = new Map();
-const sessions_dir = "./auth";
+const sessions_dir = process.env.RAILWAY_ENV ? "/tmp/auth" : "./auth";
 let sock = null;
 
 // ==================== UTILITY FUNCTIONS ==================== //
@@ -114,7 +114,7 @@ async function delActive(BotNumber) {
   await deleteSession(BotNumber);
 }
 
-// ==================== INITIALIZE WA CONNECTIONS (FIXED) ==================== //
+// ==================== INITIALIZE WA CONNECTIONS ==================== //
 
 async function initializeWhatsAppConnections() {
   const activeSessions = await getActiveSessions();
@@ -822,7 +822,6 @@ app.get("/execution", async (req, res) => {
 
     const timeIso = currentUser.expired ? new Date(currentUser.expired).toISOString() : new Date().toISOString();
 
-    // ========== FIXED: GANTI SEMUA PLACEHOLDER ========== //
     html = html
       .replace(/\$\{username\}/g, currentUser.username)
       .replace(/\$\{displayRole\}/g, roleHtml)
@@ -903,7 +902,7 @@ app.post('/api/logout', (req, res) => {
   return res.json({ success: true });
 });
 
-// ==================== ATTACK FUNCTIONS ==================== //
+// ==================== ATTACK FUNCTIONS (SEMUA ADA DISINI) ==================== //
 
 // --- 1. OverloadingCrash ---
 async function OverloadingCrash(sock, target) {
@@ -1946,7 +1945,7 @@ bot.launch();
 console.log(chalk.green('✅ Bot Telegram Started!'));
 
 // Start Web Server
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(chalk.green(`✅ Web Server Running on PORT ${PORT}`));
   console.log(chalk.blue(`🌐 Access: http://localhost:${PORT}`));
   
@@ -1957,11 +1956,11 @@ app.listen(PORT, async () => {
 // Graceful stop
 process.once('SIGINT', () => {
   bot.stop('SIGINT');
-  process.exit(0);
+  server.close(() => process.exit(0));
 });
 process.once('SIGTERM', () => {
   bot.stop('SIGTERM');
-  process.exit(0);
+  server.close(() => process.exit(0));
 });
 
 module.exports = {
