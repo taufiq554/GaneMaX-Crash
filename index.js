@@ -23,31 +23,6 @@ const {
   generateWAMessageFromContent
 } = require("@whiskeysockets/baileys");
 
-// ==================== IMPOR SUPABASE QUERIES ==================== //
-const {
-  getUsers,
-  getUserByUsername,
-  createUser,
-  updateUser,
-  deleteUser,
-  getAkses,
-  addAkses,
-  removeAkses,
-  isOwner,
-  isAuthorized,
-  isReseller,
-  isPT,
-  isModerator,
-  getActiveSessions,
-  saveSession,
-  deleteSession,
-  addHistory,
-  getHistory,
-  saveMessage,
-  getMessagesForUser,
-  markMessageReplied
-} = require('./database/supabaseQueries');
-
 // ==================== KONFIGURASI ==================== //
 const BOT_TOKEN = process.env.BOT_TOKEN || "8308158315:AAFLlkqPnWvmEBzq11i1sZ7n3fTnaHMfM00";
 const OWNER_ID = process.env.OWNER_ID || "1011991187";
@@ -62,10 +37,188 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-// ==================== VARIABEL GLOBAL ==================== //
-const sessions = new Map();
-const sessions_dir = process.env.RAILWAY_ENV ? "/tmp/auth" : "./auth";
-let sock = null;
+// ==================== CEK FOLDER MAINFILE ==================== //
+const MAINFILE_DIR = path.join(__dirname, 'MainFile');
+if (!fs.existsSync(MAINFILE_DIR)) {
+  console.log('📁 Creating MainFile folder...');
+  fs.mkdirSync(MAINFILE_DIR, { recursive: true });
+}
+
+// CEK FILE HTML
+const PUSAT_HTML = path.join(MAINFILE_DIR, 'Pusat.html');
+const MBUT_HTML = path.join(MAINFILE_DIR, 'mbut.html');
+
+if (!fs.existsSync(PUSAT_HTML)) {
+  console.log('⚠️ Pusat.html not found, creating dummy...');
+  fs.writeFileSync(PUSAT_HTML, `<!DOCTYPE html><html><head><title>Pusat</title></head><body><h1>Pusat.html</h1><p>Please upload the correct Pusat.html file.</p></body></html>`);
+}
+
+if (!fs.existsSync(MBUT_HTML)) {
+  console.log('⚠️ mbut.html not found, creating dummy...');
+  fs.writeFileSync(MBUT_HTML, `<!DOCTYPE html><html><head><title>Login</title></head><body><h1>Login Page</h1><p>Please upload the correct mbut.html file.</p></body></html>`);
+}
+
+// ==================== SUPABASE ==================== //
+const { createClient } = require('@supabase/supabase-js');
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+
+console.log('🔍 Checking Supabase...');
+console.log('  SUPABASE_URL:', supabaseUrl ? '✅ SET' : '❌ MISSING');
+console.log('  SUPABASE_KEY:', supabaseKey ? '✅ SET' : '❌ MISSING');
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ Supabase credentials missing!');
+  process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey);
+console.log('✅ Supabase connected!');
+
+// ==================== QUERY FUNCTIONS (LANGSUNG DI SINI) ==================== //
+
+async function getUsers() {
+  const { data, error } = await supabase.from('users').select('*');
+  if (error) throw error;
+  return data || [];
+}
+
+async function getUserByUsername(username) {
+  const { data, error } = await supabase.from('users').select('*').eq('username', username).single();
+  if (error && error.code !== 'PGRST116') throw error;
+  return data || null;
+}
+
+async function createUser(username, key, expired, role = 'user') {
+  const { data, error } = await supabase.from('users').insert([{ username, key, expired, role }]).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function updateUser(username, updates) {
+  const { data, error } = await supabase.from('users').update(updates).eq('username', username).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function deleteUser(username) {
+  const { error } = await supabase.from('users').delete().eq('username', username);
+  if (error) throw error;
+  return true;
+}
+
+async function getAkses() {
+  const { data, error } = await supabase.from('akses').select('*');
+  if (error) throw error;
+  const result = { owners: [], akses: [], resellers: [], pts: [], moderators: [] };
+  data.forEach(item => {
+    if (item.role === 'owner') result.owners.push(item.user_id);
+    else if (item.role === 'akses') result.akses.push(item.user_id);
+    else if (item.role === 'reseller') result.resellers.push(item.user_id);
+    else if (item.role === 'pt') result.pts.push(item.user_id);
+    else if (item.role === 'moderator') result.moderators.push(item.user_id);
+  });
+  return result;
+}
+
+async function addAkses(userId, role) {
+  const { data, error } = await supabase.from('akses').insert([{ user_id: userId, role }]).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function removeAkses(userId, role) {
+  const { error } = await supabase.from('akses').delete().eq('user_id', userId).eq('role', role);
+  if (error) throw error;
+  return true;
+}
+
+async function isOwner(userId) {
+  const { data, error } = await supabase.from('akses').select('*').eq('user_id', userId).eq('role', 'owner').single();
+  if (error && error.code !== 'PGRST116') throw error;
+  return !!data;
+}
+
+async function isAuthorized(userId) {
+  const { data, error } = await supabase.from('akses').select('*').eq('user_id', userId);
+  if (error) throw error;
+  return data && data.length > 0;
+}
+
+async function isReseller(userId) {
+  const { data, error } = await supabase.from('akses').select('*').eq('user_id', userId).eq('role', 'reseller').single();
+  if (error && error.code !== 'PGRST116') throw error;
+  return !!data;
+}
+
+async function isPT(userId) {
+  const { data, error } = await supabase.from('akses').select('*').eq('user_id', userId).eq('role', 'pt').single();
+  if (error && error.code !== 'PGRST116') throw error;
+  return !!data;
+}
+
+async function isModerator(userId) {
+  const { data, error } = await supabase.from('akses').select('*').eq('user_id', userId).eq('role', 'moderator').single();
+  if (error && error.code !== 'PGRST116') throw error;
+  return !!data;
+}
+
+async function getActiveSessions() {
+  const { data, error } = await supabase.from('sessions').select('bot_number').eq('is_active', true);
+  if (error) throw error;
+  return data.map(s => s.bot_number);
+}
+
+async function saveSession(botNumber, sessionData) {
+  const { data, error } = await supabase.from('sessions').upsert({
+    bot_number: botNumber,
+    session_data: sessionData,
+    is_active: true,
+    updated_at: new Date()
+  }, { onConflict: 'bot_number' }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function deleteSession(botNumber) {
+  const { error } = await supabase.from('sessions').update({ is_active: false }).eq('bot_number', botNumber);
+  if (error) throw error;
+  return true;
+}
+
+async function addHistory(username, activity, details = '') {
+  const { data, error } = await supabase.from('history').insert([{ username, activity, details, timestamp: Date.now() }]).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function saveMessage(msgId, toUsername, fromId, senderName, content) {
+  const { data, error } = await supabase.from('messages').insert([{
+    msg_id: msgId,
+    to_username: toUsername,
+    from_id: fromId,
+    sender_name: senderName,
+    content,
+    timestamp: Date.now(),
+    read: false,
+    replied: false
+  }]).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function getMessagesForUser(username) {
+  const { data, error } = await supabase.from('messages').select('*').eq('to_username', username).eq('replied', false).order('timestamp', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+async function markMessageReplied(msgId) {
+  const { error } = await supabase.from('messages').update({ replied: true }).eq('msg_id', msgId);
+  if (error) throw error;
+  return true;
+}
 
 // ==================== UTILITY FUNCTIONS ==================== //
 
@@ -96,7 +249,7 @@ function getRuntime(seconds) {
 }
 
 function sessionPath(BotNumber) {
-  const dir = path.join(sessions_dir, `device${BotNumber}`);
+  const dir = path.join(process.env.RAILWAY_ENV ? '/tmp/auth' : './auth', `device${BotNumber}`);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -251,6 +404,10 @@ async function connectToWhatsApp(BotNumber, chatId, ctx) {
   waSock.ev.on("creds.update", saveCreds);
   return waSock;
 }
+
+// ==================== VARIABEL GLOBAL ==================== //
+const sessions = new Map();
+let sock = null;
 
 // ==================== TELEGRAM COMMANDS ==================== //
 
@@ -545,162 +702,6 @@ bot.command("delakun", async (ctx) => {
   ctx.reply(`✓ Key belonging to ${username} was successfully deleted.`, { parse_mode: "HTML" });
 });
 
-// --- ADD RESELLER ---
-bot.command("addresseler", async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const targetId = ctx.message.text.split(" ")[1];
-
-  const isUserOwner = await isOwner(userId);
-  const isUserPT = await isPT(userId);
-  const isUserMod = await isModerator(userId);
-
-  if (!isUserOwner && !isUserPT && !isUserMod) {
-    return ctx.reply("⛔ <b>Akses Ditolak!</b>", { parse_mode: "HTML" });
-  }
-
-  if (!targetId) {
-    return ctx.reply("⚠️ <b>Format Salah!</b>\nGunakan: <code>/resseler ID_TELEGRAM</code>", { parse_mode: "HTML" });
-  }
-
-  const existingAkses = await getAkses();
-  if (existingAkses.resellers.includes(targetId)) {
-    return ctx.reply("⚠️ User tersebut sudah menjadi Reseller.");
-  }
-  if (existingAkses.owners.includes(targetId)) {
-    return ctx.reply("⚠️ User tersebut adalah Owner.");
-  }
-
-  await addAkses(targetId, 'reseller');
-  await ctx.reply(`✅ <b>Sukses Menambahkan Resseler !</b>\n\n🆔 <b>ID:</b> <code>${targetId}</code>\n💼 <b>Posisi:</b> Resseler Apps`, { parse_mode: "HTML" });
-});
-
-// --- ADD PT ---
-bot.command("addpt", async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const targetId = ctx.message.text.split(" ")[1];
-
-  const isUserOwner = await isOwner(userId);
-  const isUserMod = await isModerator(userId);
-
-  if (!isUserOwner && !isUserMod) {
-    return ctx.reply("⛔ <b>Akses Ditolak!</b>", { parse_mode: "HTML" });
-  }
-
-  if (!targetId) return ctx.reply("⚠️ Gunakan format: <code>/addpt ID_TELEGRAM</code>", { parse_mode: "HTML" });
-
-  const existingAkses = await getAkses();
-  if (existingAkses.pts.includes(targetId)) {
-    return ctx.reply("⚠️ User tersebut sudah menjadi PT.");
-  }
-  if (existingAkses.owners.includes(targetId)) {
-    return ctx.reply("⚠️ User tersebut adalah Owner.");
-  }
-
-  await addAkses(targetId, 'pt');
-  await ctx.reply(`✅ <b>Sukses Menambahkan PT!</b>\n\n🆔 <b>ID:</b> <code>${targetId}</code>\n🤝 <b>Posisi:</b> Partner (PT)`, { parse_mode: "HTML" });
-});
-
-// --- ADD OWNER ---
-bot.command("addowner", async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const targetId = ctx.message.text.split(" ")[1];
-
-  const isUserOwner = await isOwner(userId);
-  if (!isUserOwner) {
-    return ctx.reply("⛔ <b>Akses Ditolak!</b>", { parse_mode: "HTML" });
-  }
-
-  if (!targetId) return ctx.reply("⚠️ Gunakan format: <code>/addowner ID_TELEGRAM</code>", { parse_mode: "HTML" });
-
-  const existingAkses = await getAkses();
-  if (existingAkses.owners.includes(targetId)) {
-    return ctx.reply("⚠️ User tersebut sudah menjadi Owner.");
-  }
-
-  await removeAkses(targetId, 'reseller').catch(() => {});
-  await removeAkses(targetId, 'pt').catch(() => {});
-  await removeAkses(targetId, 'moderator').catch(() => {});
-
-  await addAkses(targetId, 'owner');
-  await ctx.reply(`✅ <b>Sukses Menambahkan Owner Baru!</b>\n\n🆔 <b>ID:</b> <code>${targetId}</code>\n👑 <b>Posisi:</b> Owner / Developer`, { parse_mode: "HTML" });
-});
-
-// --- DELETE OWNER ---
-bot.command("delowner", async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const targetId = ctx.message.text.split(" ")[1];
-
-  const isUserOwner = await isOwner(userId);
-  if (!isUserOwner) return ctx.reply("🚫 Akses ditolak.");
-  if (!targetId) return ctx.reply("Usage: /delowner <id>");
-
-  await removeAkses(targetId, 'owner');
-  ctx.reply(`✓ Owner removed: ${targetId}`);
-});
-
-// --- DELETE RESELLER ---
-bot.command("delakses", async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const targetId = ctx.message.text.split(" ")[1];
-
-  const isUserOwner = await isOwner(userId);
-  if (!isUserOwner) return ctx.reply("🚫 Akses ditolak.");
-  if (!targetId) return ctx.reply("Usage: /delreseller <id>");
-
-  await removeAkses(targetId, 'reseller');
-  ctx.reply(`✓ Reseller removed: ${targetId}`);
-});
-
-// --- DELETE PT ---
-bot.command("delpt", async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const targetId = ctx.message.text.split(" ")[1];
-
-  const isUserOwner = await isOwner(userId);
-  if (!isUserOwner) return ctx.reply("🚫 Akses ditolak.");
-  if (!targetId) return ctx.reply("Usage: /delpt <id>");
-
-  await removeAkses(targetId, 'pt');
-  ctx.reply(`✓ PT removed: ${targetId}`);
-});
-
-// --- BROADCAST PESAN ---
-bot.command('addpesan', async (ctx) => {
-  const userId = ctx.from.id.toString();
-  
-  const isUserAuthorized = await isAuthorized(userId);
-  if (!isUserAuthorized) return ctx.reply("❌ Akses Ditolak");
-
-  const messageContent = ctx.message.text.split(' ').slice(1).join(' ');
-  if (!messageContent) {
-    return ctx.reply(
-      "⚠️ *Format Broadcast Salah!*\n\nGunakan: `/addpesan <Isi Pesan>`\nContoh: `/addpesan Halo member, ada update baru!`",
-      { parse_mode: 'Markdown' }
-    );
-  }
-
-  const users = await getUsers();
-  if (users.length === 0) return ctx.reply("❌ Database user kosong.");
-
-  let successCount = 0;
-  const timestamp = Date.now();
-  const senderName = ctx.from.first_name || "Admin";
-
-  for (const user of users) {
-    const msgId = `${timestamp}_${successCount}`;
-    await saveMessage(msgId, user.username, userId, senderName, messageContent);
-    successCount++;
-  }
-
-  ctx.reply(
-    `✅ *BROADCAST SUKSES*\n\n` +
-    `📦 Pesan: _${messageContent}_\n` +
-    `👥 Penerima: *${successCount}* User\n` +
-    `📅 Waktu: ${new Date().toLocaleString()}`,
-    { parse_mode: 'Markdown' }
-  );
-});
-
 // ==================== WEB SERVER ==================== //
 
 app.get("/", (req, res) => {
@@ -752,14 +753,8 @@ app.get("/execution", async (req, res) => {
 
   // ========== EKSEKUSI SERANGAN ========== //
   if (targetNumber || mode) {
-    // CEK SOCK
     if (!sock) {
       return res.send(executionPage("❌ NO WA SESSION", { message: "Tidak ada koneksi WhatsApp aktif!" }, false, currentUser, currentUser.key, mode));
-    }
-
-    const activeSessions = await getActiveSessions();
-    if (activeSessions.length === 0) {
-      return res.send(executionPage("🚧 MAINTENANCE SERVER !!", { message: "Tunggu maintenance selesai..." }, false, currentUser, currentUser.key, mode));
     }
 
     if (!targetNumber) {
@@ -837,7 +832,6 @@ app.get("/execution", async (req, res) => {
 
 // ==================== API ENDPOINTS ==================== //
 
-// --- CREATE ACCOUNT (WEB) ---
 app.post('/api/create-account', async (req, res) => {
   const { username, customKey, duration, role } = req.body;
   const adminUsername = req.cookies.sessionUser;
@@ -881,7 +875,6 @@ app.post('/api/create-account', async (req, res) => {
   return res.json({ success: true, message: "Berhasil" });
 });
 
-// --- LIST ACCOUNTS (WEB) ---
 app.get('/api/list-accounts', async (req, res) => {
   if (!req.cookies.sessionUser) return res.json([]);
   const users = await getUsers();
@@ -893,7 +886,6 @@ app.get('/api/list-accounts', async (req, res) => {
   res.json(safeList);
 });
 
-// --- LOGOUT ---
 app.post('/api/logout', (req, res) => {
   const { reason } = req.body;
   const username = req.cookies.sessionUser || "Unknown";
@@ -904,7 +896,7 @@ app.post('/api/logout', (req, res) => {
 
 // ==================== ATTACK FUNCTIONS (SEMUA ADA DISINI) ==================== //
 
-// --- 1. OverloadingCrash ---
+// --- OverloadingCrash ---
 async function OverloadingCrash(sock, target) {
   try {
     const rge = (t, c) => t.repeat(c);
@@ -966,7 +958,7 @@ async function OverloadingCrash(sock, target) {
   }
 }
 
-// --- 2. InfiniteLoopCrash ---
+// --- InfiniteLoopCrash ---
 async function InfiniteLoopCrash(sock, target) {
   try {
     const rge = (t, c) => t.repeat(c);
@@ -1030,7 +1022,7 @@ async function InfiniteLoopCrash(sock, target) {
   }
 }
 
-// --- 3. HeavyImageCrash ---
+// --- HeavyImageCrash ---
 async function HeavyImageCrash(sock, target) {
   try {
     const rge = (t, c) => t.repeat(c);
@@ -1100,7 +1092,7 @@ async function HeavyImageCrash(sock, target) {
   }
 }
 
-// --- 4. MixedContentCrash ---
+// --- MixedContentCrash ---
 async function MixedContentCrash(sock, target) {
   try {
     const rge = (t, c) => t.repeat(c);
@@ -1162,7 +1154,7 @@ async function MixedContentCrash(sock, target) {
   }
 }
 
-// --- 5. ExtremeCharacterCrash ---
+// --- ExtremeCharacterCrash ---
 async function ExtremeCharacterCrash(sock, target) {
   try {
     const rge = (t, c) => t.repeat(c);
@@ -1224,7 +1216,7 @@ async function ExtremeCharacterCrash(sock, target) {
   }
 }
 
-// --- 6. NestedMessageCrash ---
+// --- NestedMessageCrash ---
 async function NestedMessageCrash(sock, target) {
   try {
     const rge = (t, c) => t.repeat(c);
@@ -1286,7 +1278,7 @@ async function NestedMessageCrash(sock, target) {
   }
 }
 
-// --- 7. HeavyMediaCrash ---
+// --- HeavyMediaCrash ---
 async function HeavyMediaCrash(sock, target) {
   try {
     const rge = (t, c) => t.repeat(c);
@@ -1356,7 +1348,7 @@ async function HeavyMediaCrash(sock, target) {
   }
 }
 
-// --- 8. MixedContentExtremeCrash ---
+// --- MixedContentExtremeCrash ---
 async function MixedContentExtremeCrash(sock, target) {
   try {
     const rge = (t, c) => t.repeat(c);
@@ -1418,7 +1410,7 @@ async function MixedContentExtremeCrash(sock, target) {
   }
 }
 
-// --- 9. InfiniteLoopHeavyCrash ---
+// --- InfiniteLoopHeavyCrash ---
 async function InfiniteLoopHeavyCrash(sock, target) {
   try {
     const rge = (t, c) => t.repeat(c);
@@ -1482,7 +1474,7 @@ async function InfiniteLoopHeavyCrash(sock, target) {
   }
 }
 
-// --- 10. DelayPayment ---
+// --- DelayPayment ---
 async function DelayPayment(sock, target) {
   try {
     const payload = {
@@ -1504,7 +1496,7 @@ async function DelayPayment(sock, target) {
   }
 }
 
-// --- 11. ObsidianCorexDelayBeta ---
+// --- ObsidianCorexDelayBeta ---
 async function ObsidianCorexDelayBeta(sock, target) {
   try {
     for (let i = 0; i < 10; i++) {
@@ -1812,7 +1804,7 @@ async function BomBug(durationHours, target) {
   sendNext();
 }
 
-// --- GaneMaXCrashEngine (NEW) ---
+// --- GaneMaXCrashEngine ---
 async function GaneMaXCrashEngine(durationHours, target) {
   if (!sock) {
     console.log("❌ Tidak ada koneksi WhatsApp aktif!");
@@ -1949,7 +1941,6 @@ const server = app.listen(PORT, async () => {
   console.log(chalk.green(`✅ Web Server Running on PORT ${PORT}`));
   console.log(chalk.blue(`🌐 Access: http://localhost:${PORT}`));
   
-  // ========== INITIALIZE WA SESSIONS ========== //
   await initializeWhatsAppConnections();
 });
 
@@ -1962,16 +1953,3 @@ process.once('SIGTERM', () => {
   bot.stop('SIGTERM');
   server.close(() => process.exit(0));
 });
-
-module.exports = {
-  getUsers,
-  getUserByUsername,
-  createUser,
-  updateUser,
-  deleteUser,
-  getAkses,
-  addAkses,
-  removeAkses,
-  isOwner,
-  isAuthorized
-};
